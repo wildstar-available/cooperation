@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 医疗诊断助手 - 控制台</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>患者管理</h1>
+            <div>
+                <button onclick="showAddPatientModal()">+ 添加患者</button>
+                <button class="logout-btn" onclick="logout()">退出登录</button>
+            </div>
+        </div>
+
+        <div id="patientList" class="patient-list">
+            <div class="empty-state">
+                <p>暂无患者信息</p>
+                <p>点击上方"添加患者"按钮添加新患者</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑患者弹窗 -->
+    <div id="patientModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">添加患者</h2>
+                <button class="close-btn" onclick="closeModal('patientModal')">&times;</button>
+            </div>
+            <form id="patientForm" onsubmit="handlePatientSubmit(event)">
+                <input type="hidden" id="patientId">
+                <div class="form-group">
+                    <label>姓名 *</label>
+                    <input type="text" id="patientName" required>
+                </div>
+                <div class="form-group">
+                    <label>年龄 *</label>
+                    <input type="number" id="patientAge" min="0" max="150" required>
+                </div>
+                <div class="form-group">
+                    <label>性别 *</label>
+                    <select id="patientGender" required>
+                        <option value="">请选择</option>
+                        <option value="男">男</option>
+                        <option value="女">女</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>症状描述 *</label>
+                    <textarea id="patientSymptoms" rows="4" required placeholder="请详细描述患者的主要症状"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>病史</label>
+                    <textarea id="patientHistory" rows="3" placeholder="请输入既往病史（可选）"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- AI 分析弹窗 -->
+    <div id="analyzeModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>AI 病情分析</h2>
+                <button class="close-btn" onclick="closeModal('analyzeModal')">&times;</button>
+            </div>
+            <div id="patientInfo"></div>
+            <button id="analyzeBtn" class="analyze-btn" onclick="runAnalysis()">
+                开始 AI 分析
+            </button>
+            <div id="loading" class="loading" style="display: none;">
+                AI 正在分析中，请稍候...
+            </div>
+            <div id="result" style="display: none;">
+                <div class="result-section">
+                    <h4>诊断结果</h4>
+                    <p id="diagnosisResult"></p>
+                </div>
+                <div class="result-section">
+                    <h4>治疗方案</h4>
+                    <p id="treatmentResult"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPatientId = null;
+
+        async function loadPatients() {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/patients', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.status === 401) {
+                    logout();
+                    return;
+                }
+
+                const patients = await response.json();
+                renderPatients(patients);
+            } catch (err) {
+                console.error('加载患者失败:', err);
+            }
+        }
+
+        function renderPatients(patients) {
+            const container = document.getElementById('patientList');
+
+            if (patients.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <p>暂无患者信息</p>
+                        <p>点击上方"添加患者"按钮添加新患者</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = patients.map(p => `
+                <div class="patient-card" onclick="showAnalyzeModal(${p.id})">
+                    <h3>${p.name}</h3>
+                    <p>年龄：${p.age}岁 | 性别：${p.gender}</p>
+                    <p>症状：${p.symptoms.substring(0, 50)}${p.symptoms.length > 50 ? '...' : ''}</p>
+                    <div class="tags">
+                        <span class="tag">${p.gender}</span>
+                        <span class="tag">${p.age}岁</span>
+                    </div>
+                    <div class="card-actions">
+                        <button class="btn-analyze" onclick="event.stopPropagation(); showAnalyzeModal(${p.id})">AI 分析</button>
+                        <button class="btn-edit" onclick="event.stopPropagation(); editPatient(${p.id})">编辑</button>
+                        <button class="btn-delete" onclick="event.stopPropagation(); deletePatient(${p.id})">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function showAddPatientModal() {
+            document.getElementById('modalTitle').textContent = '添加患者';
+            document.getElementById('patientForm').reset();
+            document.getElementById('patientId').value = '';
+            document.getElementById('patientModal').classList.add('active');
+        }
+
+        async function editPatient(id) {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`/api/patients/${id}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            const patient = await response.json();
+
+            document.getElementById('modalTitle').textContent = '编辑患者';
+            document.getElementById('patientId').value = patient.id;
+            document.getElementById('patientName').value = patient.name;
+            document.getElementById('patientAge').value = patient.age;
+            document.getElementById('patientGender').value = patient.gender;
+            document.getElementById('patientSymptoms').value = patient.symptoms;
+            document.getElementById('patientHistory').value = patient.medical_history;
+            document.getElementById('patientModal').classList.add('active');
+        }
+
+        async function handlePatientSubmit(event) {
+            event.preventDefault();
+            const token = localStorage.getItem('token');
+            const id = document.getElementById('patientId').value;
+
+            const data = {
+                name: document.getElementById('patientName').value,
+                age: parseInt(document.getElementById('patientAge').value),
+                gender: document.getElementById('patientGender').value,
+                symptoms: document.getElementById('patientSymptoms').value,
+                medical_history: document.getElementById('patientHistory').value
+            };
+
+            const url = id ? `/api/patients/${id}` : '/api/patients';
+            const method = id ? 'PUT' : 'POST';
+
+            try {
+                const response = await fetch(url, {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (response.ok) {
+                    closeModal('patientModal');
+                    loadPatients();
+                } else {
+                    alert('保存失败');
+                }
+            } catch (err) {
+                alert('网络错误');
+            }
+        }
+
+        async function deletePatient(id) {
+            if (!confirm('确定要删除该患者信息吗？')) return;
+
+            const token = localStorage.getItem('token');
+            try {
+                const response = await fetch(`/api/patients/${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.ok) {
+                    loadPatients();
+                } else {
+                    alert('删除失败');
+                }
+            } catch (err) {
+                alert('网络错误');
+            }
+        }
+
+        async function showAnalyzeModal(id) {
+            currentPatientId = id;
+            const token = localStorage.getItem('token');
+
+            const response = await fetch(`/api/patients/${id}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            const patient = await response.json();
+
+            document.getElementById('patientInfo').innerHTML = `
+                <div class="result-section">
+                    <h4>患者信息</h4>
+                    <p><strong>姓名：</strong>${patient.name}</p>
+                    <p><strong>年龄：</strong>${patient.age}岁 | <strong>性别：</strong>${patient.gender}</p>
+                    <p><strong>症状：</strong>${patient.symptoms}</p>
+                    <p><strong>病史：</strong>${patient.medical_history || '无'}</p>
+                </div>
+            `;
+
+            document.getElementById('result').style.display = 'none';
+            document.getElementById('analyzeBtn').style.display = 'block';
+
+            if (patient.diagnosis && patient.treatment) {
+                document.getElementById('diagnosisResult').textContent = patient.diagnosis;
+                document.getElementById('treatmentResult').textContent = patient.treatment;
+                document.getElementById('result').style.display = 'block';
+                document.getElementById('analyzeBtn').textContent = '重新分析';
+            }
+
+            document.getElementById('analyzeModal').classList.add('active');
+        }
+
+        async function runAnalysis() {
+            const token = localStorage.getItem('token');
+
+            const response = await fetch(`/api/patients/${currentPatientId}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            const patient = await response.json();
+
+            document.getElementById('analyzeBtn').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('result').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        patient_id: currentPatientId,
+                        symptoms: patient.symptoms,
+                        medical_history: patient.medical_history
+                    })
+                });
+
+                const result = await response.json();
+
+                document.getElementById('diagnosisResult').textContent = result.diagnosis;
+                document.getElementById('treatmentResult').textContent = result.treatment;
+                document.getElementById('result').style.display = 'block';
+            } catch (err) {
+                alert('分析失败，请重试');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            window.location.href = '/';
+        }
+
+        // 点击弹窗背景关闭
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.remove('active');
+                }
+            });
+        });
+
+        // 页面加载时获取患者列表
+        loadPatients();
+    </script>
+</body>
+</html>
